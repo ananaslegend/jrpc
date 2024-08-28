@@ -9,6 +9,8 @@ import (
 	"github.com/ananaslegend/jrpc"
 )
 
+// all examples from official documentation (https://www.jsonrpc.org/specification) are implemented
+// in the http_test.go and router_test.go, so here a simple example of using the http-router.
 func main() {
 	router := jrpc.NewHTTPRouter(
 		":8080",
@@ -24,7 +26,7 @@ func main() {
 	})
 
 	router.Method("params", func(ctx context.Context) (any, error) {
-		p := PersonParams{}
+		p := personParams{}
 
 		bts := jrpc.Params(ctx)
 
@@ -72,20 +74,26 @@ func main() {
 		return s, nil
 	})
 
+	router.Method("nil", func(ctx context.Context) (any, error) {
+		return nil, nil
+	})
+
 	group := router.Group("group")
 
 	group.Method("ping", func(ctx context.Context) (any, error) {
 		return "group pong", nil
 	})
 
-	router.Run()
+	if err := router.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
 
-type PersonParams struct {
+type personParams struct {
 	Name string `json:"name"`
 	Age  int    `json:"age"`
 }
 
 type t struct {
-	Message string
+	Message string `json:"message"`
 }
