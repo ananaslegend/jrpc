@@ -5,6 +5,12 @@ import (
 	"log/slog"
 )
 
+type Option func(*handler)
+
+func DontRender(h *handler) {
+	h.dontRender = true
+}
+
 type Router struct {
 	path   string
 	engine *engine
@@ -30,12 +36,22 @@ func (r *Router) Group(method string) *Router {
 	}
 }
 
-func (r *Router) Method(method string, handler func(ctx context.Context) (any, error)) {
+func (r *Router) Method(method string, handlerFunc func(ctx context.Context) (any, error), opts ...Option) {
+	h := &handler{handlerFunc: handlerFunc}
+
+	for _, opt := range opts {
+		opt(h)
+	}
+
 	if r.path == "" {
-		r.engine.handleMethod(method, handler)
+		r.engine.handleMethod(method, h)
 
 		return
 	}
 
-	r.engine.handleMethod(r.path+"."+method, handler)
+	r.engine.handleMethod(r.path+"."+method, h)
+}
+
+func (r *Router) Handle(ctx context.Context, jsonRPCRequest []byte) []byte {
+	return r.engine.handle(ctx, jsonRPCRequest)
 }

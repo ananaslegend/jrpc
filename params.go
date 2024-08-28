@@ -3,6 +3,7 @@ package jrpc
 import (
 	"context"
 
+	"github.com/goccy/go-json"
 	"github.com/valyala/fastjson"
 )
 
@@ -15,6 +16,21 @@ func Params(ctx context.Context) []byte {
 	}
 
 	return params.([]byte)
+}
+
+func ParamsTo[T any](ctx context.Context) (*T, error) {
+	params := Params(ctx)
+	if params == nil {
+		return nil, nil
+	}
+
+	t := new(T)
+
+	if err := json.Unmarshal(params, t); err != nil {
+		return nil, InvalidParamsError()
+	}
+
+	return t, nil
 }
 
 func setParams(ctx context.Context, reqValue *fastjson.Value) context.Context {

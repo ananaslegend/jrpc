@@ -8,6 +8,7 @@ import (
 
 var (
 	errorParsingJSONString = []byte(`{"jsonrpc": "2.0", "error": {"code": -32700, "message": "Parse error"}, "id": null}`)
+	errorInvalidRequest    = []byte(`{"jsonrpc": "2.0", "error": {"code": -32600, "message": "Invalid Request"}, "id": null}`)
 )
 
 type Error struct {
@@ -16,7 +17,7 @@ type Error struct {
 	Data    any    `json:"data"`
 }
 
-func (e Error) Error() string {
+func (e *Error) Error() string {
 	str := fmt.Sprintf(`{"code": %d, "message": "%s"`, e.Code, e.Message)
 
 	data := func() string {

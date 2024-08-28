@@ -1,22 +1,45 @@
 package jrpc
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/valyala/fastjson"
 )
 
-var (
-	nullIDValue = "null"
+const (
+	NullRequestID = "null"
 )
 
-type ID struct {
+type idKey struct{}
+
+func setRequestID(ctx context.Context, id *requestID) context.Context {
+	return context.WithValue(ctx, idKey{}, id)
+}
+
+func RequestID(ctx context.Context) string {
+	id, _ := ctx.Value(idKey{}).(*requestID)
+	if id == nil {
+		return NullRequestID
+	}
+
+	return id.String()
+}
+
+type requestID struct {
+	notNull    bool
+	renderNull bool
+
 	stringID *string
 	intID    *int
 	floatID  *float64
 }
 
-func (i *ID) String() string {
+func (i *requestID) String() string {
+	if !i.notNull {
+		return NullRequestID
+	}
+
 	if i.stringID != nil {
 		return fmt.Sprintf(`"%s"`, *i.stringID)
 	}
@@ -28,9 +51,9 @@ func (i *ID) String() string {
 	return fmt.Sprintf(`%v`, *i.intID)
 }
 
-func getRequestID(v *fastjson.Value) *ID {
+func getRequestID(v *fastjson.Value) *requestID {
 	if !v.Exists("id") {
-		return nil
+		return &requestID{}
 	}
 
 	idValue := v.Get("id")
@@ -41,16 +64,18 @@ func getRequestID(v *fastjson.Value) *ID {
 		if err != nil {
 			bytesID, err := idValue.StringBytes()
 			if err != nil {
-				return &ID{stringID: &nullIDValue}
+				nullReqID := NullRequestID
+
+				return &requestID{stringID: &nullReqID, notNull: true}
 			}
 
 			stringID := string(bytesID)
 
-			return &ID{stringID: &stringID}
+			return &requestID{stringID: &stringID, notNull: true}
 		}
 
-		return &ID{floatID: &floatID}
+		return &requestID{floatID: &floatID, notNull: true}
 	}
 
-	return &ID{intID: &intID}
+	return &requestID{intID: &intID, notNull: true}
 }

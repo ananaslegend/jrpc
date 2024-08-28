@@ -12,14 +12,34 @@ import (
 	"github.com/valyala/fastjson"
 )
 
+type handler struct {
+	handlerFunc func(ctx context.Context) (any, error)
+	dontRender  bool
+}
+
 type engine struct {
-	logger      *slog.Logger
-	handlersMap map[string]func(ctx context.Context) (any, error)
+	handlersMap map[string]*handler
+
+	logger          *slog.Logger
+	logRequestFunc  func(req []byte, logger *slog.Logger)
+	logNotFoundFunc func(method string, logger *slog.Logger)
+}
+
+func (router *engine) logRequest(req []byte) {
+	if router.logRequestFunc != nil {
+		router.logRequestFunc(req, router.logger)
+	}
+}
+
+func (router *engine) logNotFound(method string) {
+	if router.logNotFoundFunc != nil {
+		router.logNotFoundFunc(method, router.logger)
+	}
 }
 
 func newEngine(logger ...*slog.Logger) *engine {
 	r := &engine{
-		handlersMap: make(map[string]func(ctx context.Context) (any, error)),
+		handlersMap: make(map[string]*handler),
 	}
 
 	if len(logger) > 0 {
@@ -33,18 +53,24 @@ func newEngine(logger ...*slog.Logger) *engine {
 	return r
 }
 
-func (router *engine) handleMethod(method string, handler func(ctx context.Context) (any, error)) {
+func (router *engine) handleMethod(method string, h *handler) {
 	if _, ok := router.handlersMap[method]; ok {
 		panic(fmt.Sprintf("method %s already exists", method))
 	}
 
-	router.handlersMap[method] = handler
+	router.handlersMap[method] = h
 }
 
 func (router *engine) handle(ctx context.Context, bts []byte) []byte {
-	arr, err := getRequestsArr(bts)
+	router.logRequest(bts)
+
+	arr, isButch, err := getRequestsArr(bts)
 	if err != nil {
 		return errorParsingJSONString
+	}
+
+	if len(arr) == 0 {
+		return errorInvalidRequest
 	}
 
 	jobs, resultCh := workerPoolWithResult[*result](ctx, len(arr))
@@ -53,15 +79,35 @@ func (router *engine) handle(ctx context.Context, bts []byte) []byte {
 		jobs <- func() *result {
 			id := getRequestID(reqValue)
 
+			ctx = setRequestID(ctx, id)
+
 			if !reqValue.Exists("method") {
+				id.renderNull = true
 				return &result{Err: InvalidRequestError(), Id: id}
 			}
 
 			method := string(reqValue.GetStringBytes("method"))
+			if method == "" {
+				return &result{Err: InvalidRequestError(), Id: id}
+			}
 
 			ctx = setParams(ctx, reqValue)
 
-			res, err := router.handleRequest(ctx, method)
+			h, ok := router.handlersMap[method]
+			if !ok {
+				router.logNotFound(method)
+
+				return processResult(id, MethodNotFoundError(), nil)
+			}
+
+			if h.dontRender || id == nil {
+				go h.handlerFunc(ctx)
+
+				return nil
+			}
+
+			res, err := h.handlerFunc(ctx)
+
 			return processResult(id, err, res)
 		}
 	}
@@ -76,27 +122,31 @@ func (router *engine) handle(ctx context.Context, bts []byte) []byte {
 		}
 	}
 
-	return renderResponse(resultList)
+	return renderResponse(resultList, isButch)
 }
 
-func getRequestsArr(body []byte) ([]*fastjson.Value, error) {
+func getRequestsArr(body []byte) ([]*fastjson.Value, bool, error) {
 	var parser fastjson.Parser
 
 	v, err := parser.ParseBytes(body)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	requestsArr, err := v.Array()
 	if err != nil {
-		return []*fastjson.Value{v}, nil
+		return []*fastjson.Value{v}, false, nil
 	}
 
-	return requestsArr, nil
+	return requestsArr, true, nil
 }
 
-func processResult(id *ID, err error, res any) *result {
+func processResult(id *requestID, err error, res any) *result {
 	if id != nil {
+		if !id.notNull && !id.renderNull { // todo
+			return nil
+		}
+
 		if err != nil {
 			var jrpcErr *Error
 			if errors.As(err, &jrpcErr) {
@@ -112,22 +162,30 @@ func processResult(id *ID, err error, res any) *result {
 	return nil
 }
 
-func renderResponse(results []result) []byte {
+func renderResponse(results []result, isButch bool) []byte {
+	if len(results) == 0 {
+		return nil
+	}
+
 	resWriter := &bytes.Buffer{}
 
-	if len(results) > 1 {
+	if isButch {
 		resWriter.WriteRune('[')
 	}
 
-	for i, res := range results {
-		if i != 0 {
+	var firstRendered bool
+
+	for _, res := range results {
+		if firstRendered {
 			resWriter.WriteRune(',')
 		}
 
 		resWriter.Write(res.RenderJSON())
+		firstRendered = true
+
 	}
 
-	if len(results) > 1 {
+	if isButch {
 		resWriter.WriteRune(']')
 	}
 
@@ -135,18 +193,18 @@ func renderResponse(results []result) []byte {
 }
 
 func (router *engine) handleRequest(ctx context.Context, method string) (any, error) {
-	handler, ok := router.handlersMap[method]
+	h, ok := router.handlersMap[method]
 	if !ok {
 		return nil, MethodNotFoundError()
 	}
 
-	return handler(ctx)
+	return h.handlerFunc(ctx)
 }
 
 type result struct {
-	Err *Error `json:"error"`
-	Res any    `json:"result"`
-	Id  *ID    `json:"id"`
+	Err *Error     `json:"error"`
+	Res any        `json:"result"`
+	Id  *requestID `json:"id"`
 }
 
 func (r result) RenderJSON() []byte {

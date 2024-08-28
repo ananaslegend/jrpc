@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-type Option func(*HTTPRouter)
+type HTTPOption func(*HTTPRouter)
 
 type HTTPRouter struct {
 	srv *http.Server
@@ -18,7 +18,7 @@ type HTTPRouter struct {
 	*Router
 }
 
-func NewHTTPRouter(addr string, opts ...Option) *HTTPRouter {
+func NewHTTPRouter(addr string, opts ...HTTPOption) *HTTPRouter {
 	router := &HTTPRouter{
 		srv: &http.Server{
 			Addr: addr,
@@ -42,13 +42,13 @@ func NewHTTPRouter(addr string, opts ...Option) *HTTPRouter {
 	return router
 }
 
-func WithLogger(logger *slog.Logger) Option {
+func WithLogger(logger *slog.Logger) HTTPOption {
 	return func(router *HTTPRouter) {
 		router.logger = logger
 	}
 }
 
-func WithEndPoint(endPoint string) Option {
+func WithEndPoint(endPoint string) HTTPOption {
 	return func(router *HTTPRouter) {
 		router.endPoint = endPoint
 	}
@@ -64,7 +64,7 @@ func (httpRouter *HTTPRouter) Run() error {
 			return
 		}
 
-		httpRouter.handle(w, req)
+		httpRouter.Handle(w, req)
 	})
 
 	httpRouter.srv.Handler = mux
@@ -76,7 +76,7 @@ func (httpRouter *HTTPRouter) Close() error {
 	return httpRouter.srv.Close()
 }
 
-func (httpRouter *HTTPRouter) handle(w http.ResponseWriter, r *http.Request) {
+func (httpRouter *HTTPRouter) Handle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	bts, err := io.ReadAll(r.Body)
